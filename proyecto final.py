@@ -32,6 +32,8 @@ class DinoBot:
         self.sct = mss.mss()     # Instancia de mss para tomar capturas de pantalla a alta velocidad
         self.game_bbox = None    # Coordenadas (Bounding Box) del área completa del juego en la pantalla
         self.roi_bbox = None     # Coordenadas de la Región de Interés (ROI) justo delante del dinosaurio
+        self.score_bbox = None   # Coordenadas de la región del puntaje
+        self.center_bbox = None  # Coordenadas de la región central para detectar el "Game Over"
         
         # Variables de control de teclas no bloqueantes
         self.space_release_time = None
@@ -100,6 +102,15 @@ class DinoBot:
             "height": real_bbox[3]
         }
         
+        # Configurar región del puntaje (esquina superior derecha)
+        # Aproximadamente el 25% superior y el 40% derecho del área de juego
+        self.score_bbox = {
+            "top": self.game_bbox["top"],
+            "left": self.game_bbox["left"] + int(self.game_bbox["width"] * 0.60),
+            "width": int(self.game_bbox["width"] * 0.40),
+            "height": int(self.game_bbox["height"] * 0.25)
+        }
+        
         # Tomar la subimagen del juego (con escala de pantalla) y analizarla para detectar el dinosaurio
         game_img = screenshot[bbox[1]:bbox[1]+bbox[3], bbox[0]:bbox[0]+bbox[2]]
         gray = cv2.cvtColor(game_img, cv2.COLOR_BGR2GRAY)
@@ -155,6 +166,23 @@ class DinoBot:
             "left": roi_left,
             "width": roi_width,
             "height": roi_height
+        }
+        
+        w, h = real_bbox[2], real_bbox[3]
+        # Definir la región del puntaje (esquina superior derecha)
+        self.score_bbox = {
+            'top': self.game_bbox['top'] + int(h * 0.05),
+            'left': self.game_bbox['left'] + int(w * 0.60),
+            'width': int(w * 0.40),
+            'height': int(h * 0.15)
+        }
+        
+        # Definir la región central para detectar si el juego terminó
+        self.center_bbox = {
+            'top': self.game_bbox['top'] + int(h * 0.30),
+            'left': self.game_bbox['left'] + int(w * 0.30),
+            'width': int(w * 0.40),
+            'height': int(h * 0.40)
         }
         
         print(f"Área de juego configurada: {self.game_bbox}")
@@ -415,10 +443,30 @@ class DinoBot:
         # Aumentado de 0.07 a 0.22 para darle mayor anticipación al salto y evitar que salte muy cerca
         base_jump_dist = int(self.roi_bbox["width"] * 0.22) 
         
+        history_center = [] # Historial de fotogramas del centro de la pantalla
+        
         while True:
             if keyboard.is_pressed('q'):
                 print("Detenido por el usuario.")
                 break
+                
+            # --- DETECCIÓN AUTOMÁTICA DE GAME OVER ---
+            center_screenshot = np.array(self.sct.grab(self.center_bbox))
+            center_gray = cv2.cvtColor(center_screenshot, cv2.COLOR_BGRA2GRAY)
+            history_center.append(center_gray)
+            
+            if len(history_center) > 30: # Mantener historial de ~0.5 segundos
+                old_center = history_center.pop(0)
+                # Si la pantalla central no se ha movido nada en 30 frames
+                diff = cv2.absdiff(old_center, center_gray)
+                if cv2.countNonZero(diff) == 0:
+                    # Comprobar que no es simplemente el cielo vacío buscando bordes 
+                    # (como el botón de reinicio o las letras de "Game Over")
+                    edges = cv2.Canny(center_gray, 50, 150)
+                    if cv2.countNonZero(edges) > 50:
+                        print("\n[!] ¡Juego terminado detectado automáticamente! Deteniendo el bot...")
+                        break
+            # ----------------------------------------
                 
             now = time.time()
             frame_start = now
@@ -453,6 +501,14 @@ class DinoBot:
             # 2. Procesamiento de imagen y Detección
             frame_drawn, roi, binary, obstacles = self.process_frame(frame.copy())
             
+            # --- COMPROBACIÓN DE PANTALLA CONGELADA (Para evitar saltos fantasma) ---
+            is_static = False
+            if len(history_center) >= 2:
+                diff_immediate = cv2.absdiff(history_center[-2], history_center[-1])
+                # Si el cambio inmediato es casi nulo, el juego se ha congelado (dinosaurio muerto)
+                if cv2.countNonZero(diff_immediate) < 10:
+                    is_static = True
+            
             # Calcular tiempo transcurrido y umbral de salto para que estén disponibles en el HUD
             elapsed = now - self.start_time
             jump_threshold = base_jump_dist + int(elapsed * 2.1) # Incrementa con el tiempo
@@ -464,12 +520,12 @@ class DinoBot:
                 closest = min(obstacles, key=lambda o: o['x'])
                 dist = closest['x']
                 
-                # Solo actuar si el bot no está ocupado ejecutando una acción física activa
+                # Solo actuar si el bot no está ocupado y el juego no está congelado
                 is_busy = (self.space_release_time is not None or 
                            self.down_press_time is not None or 
                            self.down_release_time is not None)
                 
-                if dist < jump_threshold and not is_busy and (now - self.last_action_time > 0.15):
+                if dist < jump_threshold and not is_busy and not is_static and (now - self.last_action_time > 0.15):
                     if closest['type'] == 'high_bird':
                         # Ave alta: Ignorar por completo (pasar por debajo de pie)
                         pass
@@ -521,18 +577,84 @@ class DinoBot:
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
                 
-        # Asegurar la liberación de todas las teclas físicas al salir del juego
-        keyboard.release('space')
-        keyboard.release('down')
+        # Asegurar la liberación de teclas SÓLO si se quedaron atascadas apretadas
+        if self.space_release_time is not None:
+            keyboard.release('space')
+        if self.down_press_time is not None or self.down_release_time is not None:
+            keyboard.release('down')
+        
+        # --- NUEVO: CAPTURAR PUNTAJE CON OCR AL FINAL ---
+        print("\nEl juego terminó. Esperando 2 segundos a que el puntaje deje de parpadear...")
+        time.sleep(2)
+        print("Capturando puntaje final con OCR de la pantalla...")
+        try:
+            score_screenshot = np.array(self.sct.grab(self.score_bbox))
+            score_img = cv2.cvtColor(score_screenshot, cv2.COLOR_BGRA2BGR)
+            # ==========================================================
+            # OCR BASADO EN CLOUD (Roboflow DocTR) - Alternativa a Tesseract
+            # Este modelo profundo es infinitamente superior leyendo fuentes raras
+            # ==========================================================
+            import requests
+            import base64
+            
+            # API Key obtenida de tu práctica YOLO.py
+            API_KEY = "azVdtlsMqIztEFFGAtmR"
+            ENDPOINT_ROBOFLOW_OCR = f"https://infer.roboflow.com/doctr/ocr?api_key={API_KEY}"
+            
+            try:
+                # Convertimos el pequeño recorte del puntaje (BGB normal) a JPG
+                _, buffer = cv2.imencode('.jpg', score_img)
+                img_b64 = base64.b64encode(buffer).decode('utf-8')
+                
+                payload = {
+                    "image": {
+                        "type": "base64",
+                        "value": img_b64
+                    }
+                }
+                
+                print("Consultando puntaje en la nube con DocTR...")
+                respuesta = requests.post(ENDPOINT_ROBOFLOW_OCR, json=payload, timeout=10)
+                
+                if respuesta.status_code == 200:
+                    datos = respuesta.json()
+                    raw_text = datos.get("result", "").strip()
+                else:
+                    print(f"Error de API: {respuesta.status_code}")
+                    raw_text = ""
+                    
+            except Exception as e:
+                print(f"Fallo de conexión OCR: {str(e)}")
+                raw_text = ""
+                
+            # Procesar el resultado para separarlo lógicamente
+            import re
+            numeros = re.findall(r'\d+', raw_text)
+            
+            if len(numeros) >= 2:
+                final_score_text = f"Récord: {numeros[0]} | Actual: {numeros[-1]}"
+            elif len(raw_text) > 5:
+                # Si Tesseract omitió el espacio (ej. HI0382500241), separamos por longitud
+                # Los últimos 5 dígitos son el actual, los 5 anteriores el récord
+                solo_nums = re.sub(r'[^\d]', '', raw_text)
+                if len(solo_nums) >= 10:
+                    final_score_text = f"Récord: {solo_nums[-10:-5]} | Actual: {solo_nums[-5:]}"
+                else:
+                    final_score_text = f"Actual: {solo_nums}"
+            else:
+                final_score_text = raw_text
+                
+        except Exception as e:
+            final_score_text = f"Error de OCR: {e}"
         
         # Calcular y reportar resultados cuando el juego se detiene
         survival_time = time.time() - self.start_time
         avg_fps = np.mean(self.fps_list) if self.fps_list else 0
         
         cv2.destroyAllWindows()
-        self.report_metrics(survival_time, avg_fps)
+        self.report_metrics(survival_time, avg_fps, final_score_text)
 
-    def report_metrics(self, survival_time, avg_fps):
+    def report_metrics(self, survival_time, avg_fps, final_score_text="No capturado"):
         """
         Imprime en consola un reporte detallado del desempeño del sistema al terminar la partida.
 
@@ -544,6 +666,7 @@ class DinoBot:
         Args:
             survival_time (float): Cantidad total de segundos transcurridos desde que inició `play()` hasta que finalizó.
             avg_fps (float): Promedio matemático de todos los fotogramas procesados por segundo (FPS) en la sesión.
+            final_score_text (str): Texto del puntaje detectado por OCR.
 
         Returns:
             None.
@@ -553,6 +676,7 @@ class DinoBot:
         print("="*50)
         print(f"Método utilizado       : {self.method.capitalize()}")
         print(f"Tiempo de supervivencia: {survival_time:.2f} segundos")
+        print(f"Puntaje Final (OCR)    : {final_score_text if final_score_text else 'No se detectó texto'}")
         print(f"FPS Promedio           : {avg_fps:.2f} FPS")
         print(f"Total de saltos (jumps): {self.jumps}")
         print("-" * 50)

@@ -11,35 +11,21 @@ Antes de comenzar, asegúrate de tener lo siguiente:
 
 ---
 
-## 2. Instalación del Entorno y Dependencias
+## 2. Instalación de Dependencias
 
-Es una buena práctica utilizar un entorno virtual para no interferir con las librerías globales de tu computadora.
-
-### Paso 2.1: Activar el entorno virtual
-Abre tu terminal (Símbolo del sistema o PowerShell) y navega hasta la carpeta principal de tu proyecto. Activa tu entorno virtual:
-
-**En Windows (PowerShell/CMD):**
-```bash
-.\.venv\Scripts\Activate
-```
-
-**En macOS/Linux:**
-```bash
-source .venv/bin/activate
-```
-
-### Paso 2.2: Instalar las dependencias
-Con el entorno virtual activado, instala las librerías necesarias ejecutando el archivo `requirements.txt`:
+Para que el bot funcione correctamente, es necesario instalar algunas librerías de terceros. Abre tu terminal (Símbolo del sistema o PowerShell) y ejecuta el siguiente comando para instalarlas usando el archivo `requirements.txt`:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-**Librerías instaladas:**
+Si prefieres instalarlas manualmente, los paquetes requeridos son:
+
 - `opencv-python`: Procesamiento de imágenes (cv2).
 - `numpy`: Cálculos matemáticos y manipulación de matrices.
 - `mss`: Captura de pantalla a altísima velocidad.
 - `keyboard`: Automatización y simulación de teclas de hardware.
+- `requests`: Peticiones HTTP para el OCR basado en Deep Learning en la nube.
 
 ---
 
@@ -48,7 +34,7 @@ pip install -r requirements.txt
 ### Paso 3.1: Preparar el juego
 1. Abre Google Chrome.
 2. Desconéctate de internet o simplemente escribe en la barra de direcciones: `chrome://dino`
-3. Posiciona la ventana en tu monitor principal (maximizarla suele ser la mejor opción).
+3. Lo ideal es usar pantalla dividida: coloca la ventana de Chrome en una mitad de la pantalla y tu terminal (para ejecutar el código) en la otra mitad.
 
 ### Paso 3.2: Ejecutar el Script
 En tu terminal con el entorno virtual activado, ejecuta el archivo principal `Proyecto final.py`:
@@ -70,9 +56,10 @@ En la consola de comandos (terminal) te aparecerá el menú interactivo:
 
 ```text
 Selecciona una opción:
-1. Jugar usando Visión por Computadora (cv2.findContours)
-2. Recalibrar pantalla (Seleccionar ROI de nuevo)
-3. Salir
+1. Jugar usando detección de contornos.
+2. Jugar usando conteo de píxeles.
+3. Recalibrar pantalla (Seleccionar ROI de nuevo)
+4. Salir
 ```
 
 1. Escribe **1** y presiona Enter para iniciar.
@@ -95,13 +82,13 @@ Para detener el bot en cualquier momento:
    - Tiempo de Supervivencia (segundos).
    - Promedio de Fotogramas Por Segundo (FPS).
    - Total de acciones de evasión (saltos/agachadas).
+   - Lectura de Puntaje (OCR en la nube vía Roboflow DocTR): Extrae el Récord Histórico y el Puntaje Actual directamente de la pantalla y los imprime en consola.
    - Una guía teórica para apuntar manualmente los **Falsos Positivos** (el bot saltó a la nada) o **Falsos Negativos** (el bot chocó y no vio el obstáculo).
 
-## 5. Solución de Problemas (Troubleshooting)
+## 5. Consejos y Consideraciones Importantes
 
-- **Problema:** El bot no salta.
-  - **Solución:** Asegúrate de hacer clic dentro de la ventana de Google Chrome durante la cuenta regresiva de 3 segundos. La librería `keyboard` inyecta las teclas en la ventana que tiene el foco activo.
-- **Problema:** Las ventanas de OpenCV se congelan.
-  - **Solución:** No arrastres las ventanas de visualización agresivamente mientras el bot juega, ya que puede bloquear el hilo principal.
-- **Problema:** Da error al seleccionar el ROI en la calibración.
-  - **Solución:** Asegúrate de presionar la tecla "ENTER" o "ESPACIO" en tu teclado una vez terminado de trazar el cuadro; no presiones la X para cerrar la ventana.
+- **Foco de Ventana:** Para que el bot pueda inyectar la simulación de teclado (hacer saltar al dinosaurio), asegúrate de hacer clic dentro de la ventana de Google Chrome durante la cuenta regresiva inicial de 3 segundos.
+- **Rendimiento Visual:** Evita arrastrar o mover agresivamente las ventanas de visualización de OpenCV mientras el bot juega, ya que esto puede pausar el hilo principal y hacer que el bot se estrelle.
+- **Guardado de Calibración:** Al terminar de trazar el cuadro de calibración (ROI), recuerda presionar la tecla "ENTER" o "ESPACIO" en tu teclado para confirmar. No presiones la X de la ventana.
+- **Precisión del OCR:** Para que la lectura del puntaje final sea impecable, el cuadro de calibración debe ser grande y abarcar tanto al dinosaurio como la sección superior derecha donde aparece el puntaje. Si el cuadro está mal dibujado, el bot tomará una foto de otro elemento y podría leer caracteres sin sentido.
+- **Conexión a Internet:** El motor de extracción de texto DocTR se ejecuta en la nube de Roboflow, por lo que requieres una conexión a internet activa al momento de detener el bot para que pueda leer los puntajes.
